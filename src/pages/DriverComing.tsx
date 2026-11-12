@@ -16,6 +16,7 @@ import { auth, db } from '../config/firebase';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { listenToDriverLocation } from '../services/trackingService';
 import { trimPolylineFromPosition } from '../utils/polylineUtils';
+import polylineLib from '@mapbox/polyline';
 import { soundManager } from '../utils/notificationSound';
 import { usePreventBack } from '../hooks/usePreventBack';
 import { useGeolocation } from '../hooks/useGeolocation';
@@ -26,6 +27,9 @@ import {
   Order, 
   OrderStatus
 } from '../services/orderService';
+
+const asText = (value: unknown): string =>
+  typeof value === 'string' || typeof value === 'number' ? String(value) : '';
 
 const getAddressText = (value: unknown): string => {
   if (typeof value === 'string') return value;
@@ -135,6 +139,17 @@ export const DriverComing: React.FC<DriverComingProps> = ({
   const [serviceRequestDetails, setServiceRequestDetails] = useState<any>(null);
   const [firestoreRideData, setFirestoreRideData] = useState<any>(null);
   const gpsListenerRef = useRef<(() => void) | null>(null);
+  const [driverLocation, setDriverLocation] = useState<{ lat: number; lng: number } | null>(null);
+  // Put the animated vehicle at the first point of a route until live GPS arrives.
+  const seedVehicleFromPolyline = (encoded: string) => {
+    try {
+      const pts = polylineLib.decode(encoded);
+      if (pts.length) {
+        const [lat, lng] = pts[0];
+        setDriverLocation((prev) => prev ?? { lat, lng });
+      }
+    } catch { /* ignore bad polyline */ }
+  };
   const orderListenerRef = useRef<(() => void) | null>(null);
   // Guards setting driver info exactly once without putting driverInfo in the
   // effect deps (which would tear down and re-subscribe the listeners mid-flight).
@@ -148,11 +163,12 @@ export const DriverComing: React.FC<DriverComingProps> = ({
     ? orderData.pickupAddress
     : (orderData.pickup || orderData.pickupLocation?.address || pickup));
   
-  const finalStops = isService 
+  const rawStops = isService 
     ? (firestoreRideData?.stops || orderData.stops || []) 
     : isFood 
       ? (firestoreRideData?.stops || orderData.stops || []) 
       : (firestoreRideData?.stops || orderData.stops || stops);
+  const finalStops: any[] = Array.isArray(rawStops) ? rawStops : [];
   
   const finalCarType = isService 
     ? orderData.vehicleClass 
@@ -186,6 +202,7 @@ export const DriverComing: React.FC<DriverComingProps> = ({
         setActiveTripPolyline(poly);
         setTrimmedPolyline(poly);
         setShowRouteOverlay(true);
+        seedVehicleFromPolyline(poly);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -277,6 +294,7 @@ export const DriverComing: React.FC<DriverComingProps> = ({
           setActiveTripPolyline(poly);
           setTrimmedPolyline(poly);
           setShowRouteOverlay(true);
+          seedVehicleFromPolyline(poly);
         }
 
         // 3. Live GPS for animated vehicle + trimming
@@ -290,6 +308,8 @@ export const DriverComing: React.FC<DriverComingProps> = ({
         fullPolylineRef.current = null;
         setShowRouteOverlay(false);
         setStatusText('Your driver has arrived');
+        // Keep (or start) the live GPS so the vehicle sits at the driver's REAL position
+        ensureGpsListener();
 
         if (!hasShownArrivalAlert) {
           const alreadyNotified = localStorage.getItem(`arrival_notified_${orderId}`);
@@ -304,7 +324,7 @@ export const DriverComing: React.FC<DriverComingProps> = ({
       }
 
       // ── STARTED: driver → destination ──────────────────────────────────
-      if (newStatus === 'started') {
+      if (newStatus === 'started' || newStatus === 'in_progress' || newStatus === 'on_trip') {
         // 1. New polyline from the "polyline" field
         const tripPoly = (order as any).polyline;
         if (tripPoly) {
@@ -312,6 +332,7 @@ export const DriverComing: React.FC<DriverComingProps> = ({
           setActiveTripPolyline(tripPoly);
           setTrimmedPolyline(tripPoly);
           setShowRouteOverlay(true);
+          seedVehicleFromPolyline(tripPoly);
         }
 
         // 2. ETA from Firestore durationMinutes
@@ -441,18 +462,11 @@ export const DriverComing: React.FC<DriverComingProps> = ({
     if (canCallDriver) setIsCallConfirmOpen(true);
   };
 
-  // Driver location state for live tracking
-  const [driverLocation, setDriverLocation] = useState<{ lat: number; lng: number } | null>(null);
 
-  // Update driver location when it comes from GPS listener
-  useEffect(() => {
-    if (driverInfo?.location) {
-      setDriverLocation({
-        lat: driverInfo.location.latitude,
-        lng: driverInfo.location.longitude
-      });
-    }
-  }, [driverInfo?.location]);
+  // NOTE: the old code copied driverInfo.location into driverLocation. That value
+  // falls back to the CLIENT's own GPS (or Lusaka centre), which put the vehicle on
+  // the wrong spot. The vehicle now comes only from the driver's live GPS, or the
+  // first point of the route until the first live fix arrives.
 
   // Build map markers - stops only.
   // No pickup bubble at the polyline start — the animated vehicle marks that position.
@@ -580,17 +594,17 @@ export const DriverComing: React.FC<DriverComingProps> = ({
                     {/* Star Rating Badge */}
                     <div className="absolute -bottom-1 -right-1 bg-white dark:bg-gray-700 rounded-full px-1.5 py-0.5 shadow-md flex items-center space-x-0.5">
                       <span className="text-amber-500 text-xs">&#9733;</span>
-                      <span className="text-xs font-medium text-gray-800 dark:text-gray-200">{driverInfo.rating?.toFixed(1) || '0.0'}</span>
+                      <span className="text-xs font-medium text-gray-800 dark:text-gray-200">{(Number(driverInfo.rating) || 0).toFixed(1)}</span>
                     </div>
                   </div>
                   
                   <div className="flex-1">
                     {/* Plate Number */}
-                    <h3 className="font-bold text-lg text-gray-900 dark:text-white">{driverInfo.plateNumber || 'Unknown'}</h3>
+                    <h3 className="font-bold text-lg text-gray-900 dark:text-white">{asText(driverInfo.plateNumber) || 'Unknown'}</h3>
                     {/* Car Model (color brand model) */}
-                    <p className="text-gray-600 dark:text-gray-300">{driverInfo.carModel || 'Vehicle'}</p>
+                    <p className="text-gray-600 dark:text-gray-300">{asText(driverInfo.carModel) || 'Vehicle'}</p>
                     {/* Driver Name (firstName) */}
-                    <p className="text-gray-900 dark:text-white font-medium">{driverInfo.name || 'Driver'}</p>
+                    <p className="text-gray-900 dark:text-white font-medium">{asText(driverInfo.name) || 'Driver'}</p>
                   </div>
                   
                   {/* Car Image - from carImage field */}
@@ -711,15 +725,15 @@ export const DriverComing: React.FC<DriverComingProps> = ({
                     <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4 space-y-2">
                       <div className="flex justify-between text-sm">
                         <span className="text-gray-600 dark:text-gray-300">Food subtotal</span>
-                        <span className="font-medium text-gray-900 dark:text-white">K {foodOrderDetails?.foodSubtotal || orderData?.foodSubtotal || 0}</span>
+                        <span className="font-medium text-gray-900 dark:text-white">K {asText(foodOrderDetails?.foodSubtotal || orderData?.foodSubtotal) || 0}</span>
                       </div>
                       <div className="flex justify-between text-sm">
                         <span className="text-gray-600 dark:text-gray-300">Delivery fee</span>
-                        <span className="font-medium text-gray-900 dark:text-white">K {foodOrderDetails?.fee || foodOrderDetails?.deliveryFee || orderData?.fee || 0}</span>
+                        <span className="font-medium text-gray-900 dark:text-white">K {asText(foodOrderDetails?.fee || foodOrderDetails?.deliveryFee || orderData?.fee) || 0}</span>
                       </div>
                       <div className="flex justify-between pt-2 border-t border-gray-200 dark:border-gray-700">
                         <span className="font-semibold text-gray-900 dark:text-white">Total</span>
-                        <span className="text-lg font-bold text-gray-900 dark:text-white">K {finalPrice}</span>
+                        <span className="text-lg font-bold text-gray-900 dark:text-white">K {asText(finalPrice)}</span>
                       </div>
                     </div>
                   </motion.div>
@@ -771,10 +785,10 @@ export const DriverComing: React.FC<DriverComingProps> = ({
                           <CreditCard className="text-purple-600" size={20} />
                           <div>
                             <p className="font-medium text-gray-900 dark:text-white">Cash</p>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">Fare - {finalCarType}</p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Fare - {asText(finalCarType)}</p>
                           </div>
                         </div>
-                        <span className="font-bold text-gray-900 dark:text-white">K {finalPrice}</span>
+                        <span className="font-bold text-gray-900 dark:text-white">K {asText(finalPrice)}</span>
                       </div>
                     </div>
                   </motion.div>

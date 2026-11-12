@@ -88,10 +88,16 @@ export async function joinChannel(
   let microphonePublished = false;
   try {
     localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
-  } catch (error) {
-    // Still join so the caller can hear remote audio without a local microphone.
-    console.warn('Could not create microphone track:', error);
-    micError = getMicError(error);
+  } catch (firstError) {
+    try {
+      // The WebView can need a moment after Android grants the permission: try once more.
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+    } catch (error) {
+      // Still join so the caller can hear remote audio without a local microphone.
+      console.warn('Could not create microphone track:', firstError, error);
+      micError = getMicError(error);
+    }
   }
   let left = false;
   client.on('user-published', async (user, mediaType) => {

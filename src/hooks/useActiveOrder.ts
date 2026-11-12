@@ -56,9 +56,8 @@ export const ACTIVE_ORDER_POLICY = {
       ) {
         return '/waiting-for-driver';
       }
-      if (['started', 'in_progress', 'on_trip', 'at_stop'].includes(status)) {
-        return '/live-tracking';
-      }
+      // Direct rides (no store) are tracked on /driver-coming for every status,
+      // including started / in_progress. /live-tracking is for store deliveries only.
       return '/driver-coming';
     }
 

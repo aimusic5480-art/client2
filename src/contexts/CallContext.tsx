@@ -5,7 +5,7 @@ import { arrayRemove, arrayUnion, doc, updateDoc } from 'firebase/firestore';
 import { auth, database, db } from '../config/firebase';
 import { acceptCall, declineCall, endCall as apiEndCall, getMicPermissionState, joinChannel, MIC_BLOCKED_MESSAGE, primeMicrophone, startCall as apiStartCall, type ActiveCall, type CallCredentials, type MicError } from '../services/callService';
 import { useActiveOrder } from '../hooks/useActiveOrder';
-import { callServiceStart, callServiceStop, cancelCallNotification, disposeNativeCalls, initNativeCalls, isNative, NativeCalls, openCallSettings, requestNativeMicrophonePermission } from '../native/calls';
+import { callServiceStart, callServiceStop, cancelCallNotification, disposeNativeCalls, getCallPermissionStatus, initNativeCalls, isNative, NativeCalls, openCallSettings, requestNativeMicrophonePermission } from '../native/calls';
 
 type CallState = 'idle' | 'calling' | 'ringing' | 'in-call' | 'ended';
 type CallSnapshot = { callId: string; orderId: string; channel: string; direction: 'incoming' | 'outgoing'; peerName?: string; status: 'ringing' | 'active' | 'ended' | 'declined' | 'missed' | 'cancelled' | 'trip_ended'; expiresAt?: number; startedAt?: number; durationSeconds?: number; };
@@ -204,7 +204,16 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => { if (callState !== 'in-call' || !snapshot?.startedAt) return; const timer = window.setInterval(() => setElapsedSeconds(Math.floor((Date.now() + offsetRef.current - snapshot.startedAt!) / 1000)), 1000); return () => window.clearInterval(timer); }, [callState, snapshot?.startedAt]);
 
-  const connect = useCallback(async (credentials: CallCredentials) => { const activeCall = await joinChannel(credentials, () => setCallState('in-call')); activeRef.current = activeCall; setMicAvailable(activeCall.micAvailable); setMicError(activeCall.micError); setMicBannerDismissed(false); }, []);
+  const ensureNativeMic = useCallback(async () => {
+    if (!isNative()) return;
+    const status = await getCallPermissionStatus().catch(() => null);
+    if (status?.microphone) return;
+    await Promise.race([
+      requestNativeMicrophonePermission(),
+      new Promise<void>((resolve) => window.setTimeout(resolve, 8000)),
+    ]);
+  }, []);
+  const connect = useCallback(async (credentials: CallCredentials) => { await ensureNativeMic(); const activeCall = await joinChannel(credentials, () => setCallState('in-call')); activeRef.current = activeCall; setMicAvailable(activeCall.micAvailable); setMicError(activeCall.micError); setMicBannerDismissed(false); }, [ensureNativeMic]);
   const start = useCallback(async (orderId: string, peerLabel = 'Driver') => {
     if (endingRef.current || callStateRef.current !== 'idle') return;
     peerLabelRef.current = peerLabel;

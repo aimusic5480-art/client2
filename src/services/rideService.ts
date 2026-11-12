@@ -267,7 +267,7 @@ class RideService {
         if (data) {
           Object.entries(data).forEach(([driverId, driverData]) => {
             const driver = driverData as any;
-            if (driver && driver.isOnline === true && driver.isBusy === false) {
+            if (driver && driver.isOnline === true && driver.isBusy !== true) {
               this.onlineDriversCache.set(driverId, {
                 driverId,
                 vehicleCategory: driver.vehicleCategory || '',

@@ -4,10 +4,12 @@ import { calculateDistance } from '../utils/etaCalculation';
 import type { MapMarker } from '../components/MapLibreMap';
 import { db } from '../config/firebase';
 import { doc, getDoc } from 'firebase/firestore';
+import { API_BASE } from '../config/api';
 
 const MAX_DISTANCE_KM = 5;
 
 export const useNearbyDrivers = (latitude: number | null, longitude: number | null): MapMarker[] => {
+  const [polled, setPolled] = useState<MapMarker[]>([]);
   const [onlineDrivers, setOnlineDrivers] = useState(new Map<string, { vehicleCategory: string; vehicleColor?: string }>());
   const [locations, setLocations] = useState(new Map<string, { lat: number; lng: number }>());
   const [profileColors, setProfileColors] = useState(new Map<string, string>());
@@ -51,7 +53,7 @@ export const useNearbyDrivers = (latitude: number | null, longitude: number | nu
     };
   }, []);
 
-  return useMemo(() => {
+  const liveMarkers = useMemo(() => {
     if (latitude == null || longitude == null) return [];
     return Array.from(onlineDrivers.entries()).flatMap(([driverId, driver]) => {
       const location = locations.get(driverId);
@@ -59,6 +61,32 @@ export const useNearbyDrivers = (latitude: number | null, longitude: number | nu
       return [{ id: `nearby-driver-${driverId}`, type: 'driver' as const, lat: location.lat, lng: location.lng, label: driver.vehicleCategory, vehicleType: driver.vehicleCategory, vehicleColor: driver.vehicleColor || profileColors.get(driverId) }];
     });
   }, [latitude, longitude, locations, onlineDrivers, profileColors]);
+
+  // Fallback: if the direct database read gives nothing (blocked rules, WebView hiccup),
+  // ask the backend for drivers around the client and refresh every 6 s.
+  const roundedLat = latitude == null ? null : Math.round(latitude * 500) / 500;
+  const roundedLng = longitude == null ? null : Math.round(longitude * 500) / 500;
+  const hasLive = liveMarkers.length > 0;
+  useEffect(() => {
+    if (roundedLat == null || roundedLng == null || hasLive) { setPolled([]); return; }
+    let stopped = false;
+    const run = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/nearbyDrivers?lat=${roundedLat}&lng=${roundedLng}&radiusKm=${MAX_DISTANCE_KM}`);
+        const json = await response.json();
+        if (stopped || !Array.isArray(json?.drivers)) return;
+        setPolled(json.drivers.map((d: any) => ({
+          id: `nearby-driver-${d.id}`, type: 'driver' as const, lat: Number(d.lat), lng: Number(d.lng),
+          label: d.vehicleCategory, vehicleType: d.vehicleCategory, vehicleColor: d.color || undefined,
+        })));
+      } catch { /* keep the last list */ }
+    };
+    void run();
+    const timer = setInterval(run, 6000);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [roundedLat, roundedLng, hasLive]);
+
+  return hasLive ? liveMarkers : polled;
 };
 
 export const LUSAKA_DEFAULT = { lat: -15.3875, lng: 28.3228 };

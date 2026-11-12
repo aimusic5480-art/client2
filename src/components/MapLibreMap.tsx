@@ -377,6 +377,7 @@ export const MapLibreMap: React.FC<MapLibreMapProps> = ({
   const driverMarkerRef = useRef<maplibregl.Marker | null>(null);
   const etaBubbleRef = useRef<maplibregl.Marker | null>(null);
   const arrivalCardRef = useRef<maplibregl.Marker | null>(null);
+  const routeFitKeyRef = useRef<string | null>(null);
   const storeMarkerRef = useRef<maplibregl.Marker | null>(null);
   const onEtaBubbleClickRef = useRef(onEtaBubbleClick);
   const onArrivalCardClickRef = useRef(onArrivalCardClick);
@@ -619,72 +620,67 @@ export const MapLibreMap: React.FC<MapLibreMapProps> = ({
     }
   }, [markers, isMapLoaded, fitBounds, driverPosition]);
 
-  // Update polyline
+  // Update polyline (in place; never throws; re-frames the camera only when the route changes)
   useEffect(() => {
-    if (!map.current || !isMapLoaded) return;
+    const m = map.current;
+    if (!m || !isMapLoaded) return;
 
-    // Remove existing polyline
-    if (map.current.getSource('route')) {
-      map.current.removeLayer('route-line');
-      map.current.removeSource('route');
+    const removeRoute = () => {
+      try { if (m.getLayer('route-line')) m.removeLayer('route-line'); } catch { /* already gone */ }
+      try { if (m.getSource('route')) m.removeSource('route'); } catch { /* already gone */ }
+    };
+
+    if (!encodedPolyline) {
+      removeRoute();
+      routeFitKeyRef.current = null;
+      return;
     }
 
-    if (!encodedPolyline) return;
-
     try {
-      // Decode polyline
       const decoded = polyline.decode(encodedPolyline);
       const coordinates = decoded.map(([lat, lng]) => [lng, lat]);
+      if (coordinates.length < 2) {
+        removeRoute();
+        return;
+      }
+      const feature = {
+        type: 'Feature' as const,
+        properties: {},
+        geometry: { type: 'LineString' as const, coordinates },
+      };
 
-      // Add source and layer
-      map.current.addSource('route', {
-        type: 'geojson',
-        data: {
-          type: 'Feature',
-          properties: {},
-          geometry: {
-            type: 'LineString',
-            coordinates
-          }
-        }
-      });
-
-      map.current.addLayer({
-        id: 'route-line',
-        type: 'line',
-        source: 'route',
-        layout: {
-          'line-join': 'round',
-          'line-cap': 'round'
-        },
-        paint: {
-          'line-color': '#5B2EFF',
-          'line-width': 5,
-          'line-opacity': 0.8
-        }
-      });
-
-      // Fit bounds to polyline
-      if (coordinates.length > 0) {
-        const bounds = new maplibregl.LngLatBounds();
-        coordinates.forEach(coord => {
-          bounds.extend(coord as [number, number]);
+      const existing = m.getSource('route') as maplibregl.GeoJSONSource | undefined;
+      if (existing && m.getLayer('route-line')) {
+        existing.setData(feature);
+      } else {
+        removeRoute();
+        m.addSource('route', { type: 'geojson', data: feature });
+        m.addLayer({
+          id: 'route-line',
+          type: 'line',
+          source: 'route',
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: { 'line-color': '#5B2EFF', 'line-width': 5, 'line-opacity': 0.8 },
         });
-        // Asymmetric padding to account for the draggable bottom panel covering
-        // the lower half of the map — keeps the pickup end (polyline start) and
-        // its ETA bubble visible instead of hidden behind the panel.
-        map.current.fitBounds(bounds, {
-          // Keep the route close in frame rather than pulling the camera back
-          // for the covered bottom panel. The route itself is the focal point.
+      }
+
+      // Frame the route only when the destination changes (new route), not on every trim.
+      const last = coordinates[coordinates.length - 1];
+      const fitKey = `${last[0].toFixed(4)},${last[1].toFixed(4)}`;
+      if (routeFitKeyRef.current !== fitKey) {
+        routeFitKeyRef.current = fitKey;
+        const bounds = new maplibregl.LngLatBounds();
+        coordinates.forEach((coord) => bounds.extend(coord as [number, number]));
+        m.fitBounds(bounds, {
           padding: { top: 56, bottom: 128, left: 40, right: 40 },
           maxZoom: 15,
           duration: 800,
           easing: (t) => t * (2 - t),
-          essential: true
+          essential: true,
         });
       }
     } catch (error) {
-      console.error('Error decoding polyline:', error);
+      console.error('Error drawing polyline:', error);
     }
   }, [encodedPolyline, isMapLoaded]);
 

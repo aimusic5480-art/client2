@@ -133,7 +133,7 @@ export const RatingModal: React.FC<RatingModalProps> = ({
       if (path === 'direct_trip') {
         // Direct trip: submit driver rating and close
         await submitDriverRating(rating, feedback);
-        await onSubmitted?.();
+        try { await onSubmitted?.(); } catch (e) { console.warn('markOrderRated failed', e); }
         onClose();
       } else {
         // Store delivery path
@@ -157,7 +157,7 @@ export const RatingModal: React.FC<RatingModalProps> = ({
             submitDriverRating(driverRating.rating, driverRating.feedback),
             submitStoreRating(rating, feedback),
           ]);
-          await onSubmitted?.();
+          try { await onSubmitted?.(); } catch (e) { console.warn('markOrderRated failed', e); }
           onClose();
         }
       }

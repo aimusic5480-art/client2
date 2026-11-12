@@ -688,7 +688,7 @@ export const LiveTrackingPage: React.FC = () => {
                       <div className="flex items-center space-x-1 bg-amber-50 dark:bg-amber-900/30 px-2 py-0.5 rounded-full">
                         <Star size={14} className="text-amber-500 fill-amber-500" />
                         <span className="text-sm font-medium text-amber-700 dark:text-amber-400">
-                          {driverData.rating?.toFixed(1) || '0.0'}
+                          {(Number(driverData.rating) || 0).toFixed(1)}
                         </span>
                       </div>
                     </div>
@@ -769,15 +769,15 @@ export const LiveTrackingPage: React.FC = () => {
                     {orderData.items?.length || 0} Item{(orderData.items?.length || 0) !== 1 ? 's' : ''}
                   </span>
                 </div>
-                <span className="text-gray-900 dark:text-white">K {(orderData.subtotal || 0).toFixed(2)}</span>
+                <span className="text-gray-900 dark:text-white">K {(Number(orderData.subtotal) || 0).toFixed(2)}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-gray-600 dark:text-gray-300">Delivery fee</span>
-                <span className="text-gray-900 dark:text-white">K {(orderData.fee || 0).toFixed(2)}</span>
+                <span className="text-gray-900 dark:text-white">K {(Number(orderData.fee) || 0).toFixed(2)}</span>
               </div>
               <div className="flex items-center justify-between border-t border-gray-100 dark:border-gray-800 pt-2 font-bold">
                 <span className="text-gray-900 dark:text-white">Total</span>
-                <span className="text-gray-900 dark:text-white">K {(orderData.total ?? ((orderData.subtotal || 0) + (orderData.fee || 0))).toFixed(2)}</span>
+                <span className="text-gray-900 dark:text-white">K {(Number(orderData.total ?? ((Number(orderData.subtotal) || 0) + (Number(orderData.fee) || 0))) || 0).toFixed(2)}</span>
               </div>
             </div>
           </motion.div>

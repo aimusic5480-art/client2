@@ -50,6 +50,13 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             <p className="text-sm text-gray-500 mb-6 leading-relaxed">
               An unexpected error occurred. Please reload the app to continue.
             </p>
+            {this.state.error && (
+              <pre className="mb-4 max-h-40 overflow-auto rounded-lg bg-gray-100 p-3 text-left text-[11px] leading-snug text-gray-700 whitespace-pre-wrap break-words select-text">
+                {String(this.state.error.message || this.state.error).slice(0, 400)}
+                {'\n'}
+                {String(this.state.error.stack || '').split('\n').slice(1, 4).join('\n').slice(0, 400)}
+              </pre>
+            )}
             <button
               onClick={this.handleReset}
               className="w-full bg-[#5B2EFF] text-white font-semibold rounded-xl py-3 hover:bg-[#4a25cc] transition-colors"
